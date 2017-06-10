@@ -68,7 +68,7 @@ int rxPos=0;
 int gotRx=0;
 int rxVal=0;
 int m=0;
-int mParam[5]={0}
+int mParam[5]={0};
 // *****************************************************************************
 /* Application Data
   Summary:
@@ -422,7 +422,7 @@ void APP_Tasks(void) {
             
             while(appData.readBuffer[b]!=0){
                 
-                if(appData.readBuffer[b]=='/n'||appData.readBuffer[b]=='\r'){
+                if(appData.readBuffer[b]=='\n'||appData.readBuffer[b]=='\r'){
                     rx[rxPos]=0;
                     sscanf(rx,"%d", &rxVal);
                     gotRx=1; mParam[m]=rxVal;
