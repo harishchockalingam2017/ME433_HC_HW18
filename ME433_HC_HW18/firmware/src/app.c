@@ -63,6 +63,12 @@ uint8_t APP_MAKE_BUFFER_DMA_READY readBuffer[APP_READ_BUFFER_SIZE];
 int len, i = 0;
 int startTime = 0;
 
+char rx[64];
+int rxPos=0;
+int gotRx=0;
+int rxVal=0;
+int m=0;
+int mParam[5]={0}
 // *****************************************************************************
 /* Application Data
   Summary:
@@ -364,8 +370,8 @@ void APP_Initialize(void) {
     OC3R = 4500; // read-only
     T3CONbits.ON = 1;
     OC3CONbits.ON = 1;
-
-
+    
+    RPB9Rbits.RPB9R=0b0101; //OC3 for servo
     startTime = _CP0_GET_COUNT();
 }
 
@@ -412,14 +418,34 @@ void APP_Tasks(void) {
             if (APP_StateReset()) {
                 break;
             }
+            int b=0;
             
+            while(appData.readBuffer[b]!=0){
+                
+                if(appData.readBuffer[b]=='/n'||appData.readBuffer[b]=='\r'){
+                    rx[rxPos]=0;
+                    sscanf(rx,"%d", &rxVal);
+                    gotRx=1; mParam[m]=rxVal;
+                    
               // somewhere in APP_Tasks(), probably in case APP_STATE_SCHEDULE_READ
-                // when you read data from the host
-                LATAbits.LATA1 = 1; // direction
-                OC1RS = 600; // velocity, 50%
-                LATBbits.LATB3 = 0; // direction
-                OC4RS = 600; // velocity, 50%
-                OC3RS = 3500; // should set the motor to 60 degrees (0.5ms to 2.5ms is 1500 to 7500 for 0 to 180 degrees)
+             // when you read data from the host
+                LATAbits.LATA1 = mParam[0]; // direction
+                OC1RS = mParam[1]; // velocity, 50%
+                LATBbits.LATB3 = mParam[2]; // direction
+                OC4RS = mParam[3]; // velocity, 50%
+                OC3RS = 1500+mParam[4]*6000/180; // should set the motor to 60 degrees (0.5ms to 2.5ms is 1500 to 7500 for 0 to 180 degrees)
+                
+                break;
+            }else if(appData.readBuffer[b]==0){
+                    break;}
+                else{
+                    rx[rxPos]=appData.readBuffer[b];
+        
+                     b=b+1;
+                    rxPos=rxPos+1;
+                    }
+             }
+                
             /* If a read is complete, then schedule a read
              * else wait for the current read to complete */
 
@@ -450,7 +476,7 @@ void APP_Tasks(void) {
             /* Check if a character was received or a switch was pressed.
              * The isReadComplete flag gets updated in the CDC event handler. */
 
-            if (appData.isReadComplete || _CP0_GET_COUNT() - startTime > (48000000 / 2 / 5)) {
+            if (gotRx || _CP0_GET_COUNT() - startTime > (48000000 / 2 / 5)) {
                 appData.state = APP_STATE_SCHEDULE_WRITE;
             }
 
@@ -468,15 +494,25 @@ void APP_Tasks(void) {
             appData.writeTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
             appData.isWriteComplete = false;
             appData.state = APP_STATE_WAIT_FOR_WRITE_COMPLETE;
-
-            len = sprintf(dataOut, "%d\r\n", i);
-            i++;
-            if (appData.isReadComplete) {
+            
+            if(gotRx){
+                len = sprintf(dataOut, "m: %d, got: %d \r\n", m, rxVal);
+                m++;
+                if(m>4){
+                    m=0;
+                }
+                i++;
+          
                 USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &appData.writeTransferHandle,
-                        appData.readBuffer, 1,
+                        dataOut, len,
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
+                rxPos=0;
+                gotRx=0;
             } else {
+                len=1;
+                dataOut[0]=0;
+                i++;
                 USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &appData.writeTransferHandle, dataOut, len,
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
