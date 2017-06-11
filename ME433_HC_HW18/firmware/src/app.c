@@ -63,10 +63,10 @@ uint8_t APP_MAKE_BUFFER_DMA_READY readBuffer[APP_READ_BUFFER_SIZE];
 int len, i = 0;
 int startTime = 0;
 
-char rx[64];
-int rxPos=0;
-int gotRx=0;
-int rxVal=0;
+char rx[64]; // the raw data
+int rxPos = 0; // how much data has been stored
+int gotRx = 0; // the flag
+int rxVal = 0; // a place to store the int that was received
 int m=0;
 int mParam[5]={0};
 // *****************************************************************************
@@ -336,7 +336,7 @@ void APP_Initialize(void) {
 
     /* Set up the read buffer */
     appData.readBuffer = &readBuffer[0];
-    
+ 
     // put these initializations in APP_Initialize()
     RPA0Rbits.RPA0R = 0b0101; // A0 is OC1
     TRISAbits.TRISA1 = 0;
@@ -346,7 +346,7 @@ void APP_Initialize(void) {
     TRISBbits.TRISB3 = 0;
     LATBbits.LATB3 = 0; // B3 is the direction pin to go along with OC4
     
-     // also put these in APP_Initialize()
+    // also put these in APP_Initialize()
     T2CONbits.TCKPS = 2; // prescaler N=4 
     PR2 = 1200 - 1; // 10kHz
     TMR2 = 0;
@@ -360,7 +360,8 @@ void APP_Initialize(void) {
     OC1CONbits.ON = 1;
     OC4CONbits.ON = 1;
     
-     // put these initializations in APP_Initialize()
+    RPB9Rbits.RPB9R = 0b0101; // OC3 for servo
+    // put these initializations in APP_Initialize()
     T3CONbits.TCKPS = 4; // prescaler N=16
     PR3 = 60000 - 1; // 50Hz
     TMR3 = 0;
@@ -371,7 +372,6 @@ void APP_Initialize(void) {
     T3CONbits.ON = 1;
     OC3CONbits.ON = 1;
     
-    RPB9Rbits.RPB9R=0b0101; //OC3 for servo
     startTime = _CP0_GET_COUNT();
 }
 
@@ -418,34 +418,7 @@ void APP_Tasks(void) {
             if (APP_StateReset()) {
                 break;
             }
-            int b=0;
-            
-            while(appData.readBuffer[b]!=0){
-                
-                if(appData.readBuffer[b]=='\n'||appData.readBuffer[b]=='\r'){
-                    rx[rxPos]=0;
-                    sscanf(rx,"%d", &rxVal);
-                    gotRx=1; mParam[m]=rxVal;
-                    
-              // somewhere in APP_Tasks(), probably in case APP_STATE_SCHEDULE_READ
-             // when you read data from the host
-                LATAbits.LATA1 = mParam[0]; // direction
-                OC1RS = mParam[1]; // velocity, 50%
-                LATBbits.LATB3 = mParam[2]; // direction
-                OC4RS = mParam[3]; // velocity, 50%
-                OC3RS = 1500+mParam[4]*6000/180; // should set the motor to 60 degrees (0.5ms to 2.5ms is 1500 to 7500 for 0 to 180 degrees)
-                
-                break;
-            }else if(appData.readBuffer[b]==0){
-                    break;}
-                else{
-                    rx[rxPos]=appData.readBuffer[b];
-        
-                     b=b+1;
-                    rxPos=rxPos+1;
-                    }
-             }
-                
+
             /* If a read is complete, then schedule a read
              * else wait for the current read to complete */
 
@@ -453,6 +426,35 @@ void APP_Tasks(void) {
             if (appData.isReadComplete == true) {
                 appData.isReadComplete = false;
                 appData.readTransferHandle = USB_DEVICE_CDC_TRANSFER_HANDLE_INVALID;
+               
+                int b = 0;
+                // loop thru the characters in the buffer
+                while (appData.readBuffer[b] != 0) {
+                    // if you got a newline
+                    if (appData.readBuffer[b] == '\n' || appData.readBuffer[b] == '\r') {
+                        rx[rxPos] = 0; // end the array
+                        sscanf(rx, "%d", &rxVal); // get the int out of the array
+                        gotRx = 1; // set the flag
+                        mParam[m]=rxVal;
+
+                 // somewhere in APP_Tasks(), probably in case APP_STATE_SCHEDULE_READ
+                // when you read data from the host
+                LATAbits.LATA1 = mParam[0]; // direction
+                OC1RS = mParam[1]; // velocity, 50%
+                LATBbits.LATB3 = mParam[2]; // direction
+                OC4RS = mParam[3]; // velocity, 50%
+                OC3RS = 1500+mParam[4]*6000/180; // should set the motor to 90 degrees (0.5ms to 2.5ms is 1500 to 7500 for 0 to 180 degrees)
+                 break; // get out of the while loop
+                 
+                    } else if (appData.readBuffer[b] == 0) {
+                        break; // there was no newline, get out of the while loop
+                    } else {
+                        // save the character into the array
+                        rx[rxPos] = appData.readBuffer[b];
+                        rxPos++;
+                        b++;
+                    }
+                }
 
                 USB_DEVICE_CDC_Read(USB_DEVICE_CDC_INDEX_0,
                         &appData.readTransferHandle, appData.readBuffer,
@@ -462,6 +464,7 @@ void APP_Tasks(void) {
                     appData.state = APP_STATE_ERROR;
                     break;
                 }
+
             }
 
             break;
@@ -479,9 +482,7 @@ void APP_Tasks(void) {
             if (gotRx || _CP0_GET_COUNT() - startTime > (48000000 / 2 / 5)) {
                 appData.state = APP_STATE_SCHEDULE_WRITE;
             }
-
             break;
-
 
         case APP_STATE_SCHEDULE_WRITE:
 
@@ -495,24 +496,23 @@ void APP_Tasks(void) {
             appData.isWriteComplete = false;
             appData.state = APP_STATE_WAIT_FOR_WRITE_COMPLETE;
             
-            if(gotRx){
+            if (gotRx) {
                 len = sprintf(dataOut, "m: %d, got: %d \r\n", m, rxVal);
                 m++;
-                if(m>4){
-                    m=0;
-                }
+                 if(m>4){
+                     m=0;
+                 }
                 i++;
-          
                 USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &appData.writeTransferHandle,
                         dataOut, len,
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
-                rxPos=0;
-                gotRx=0;
+                rxPos = 0;
+                gotRx = 0;
             } else {
-                len=1;
-                dataOut[0]=0;
-                i++;
+                    len=1; 
+                    dataOut[0]=0; 
+                    i++;
                 USB_DEVICE_CDC_Write(USB_DEVICE_CDC_INDEX_0,
                         &appData.writeTransferHandle, dataOut, len,
                         USB_DEVICE_CDC_TRANSFER_FLAGS_DATA_COMPLETE);
